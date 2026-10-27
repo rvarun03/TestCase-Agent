@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class GenerateRequest(BaseModel):
@@ -26,6 +26,20 @@ class Requirement(BaseModel):
 class RequirementAnalysis(BaseModel):
     requirements: list[Requirement]
     missing_details: list[str]
+
+    @field_validator("requirements", mode="before")
+    @classmethod
+    def add_ids_to_string_requirements(cls, value: object) -> object:
+        """Accept concise model output while preserving stable IDs downstream."""
+        if not isinstance(value, list):
+            return value
+
+        return [
+            {"id": f"FR-{index:02d}", "description": item}
+            if isinstance(item, str)
+            else item
+            for index, item in enumerate(value, start=1)
+        ]
 
 
 class TestScenario(BaseModel):

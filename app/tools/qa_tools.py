@@ -82,26 +82,16 @@ async def create_test_cases(scenarios_text: str) -> str:
 
 @tool
 async def generate_test_case_report(runtime: ToolRuntime[BRDContext]) -> str:
-    """Generate a QA report from the BRD securely supplied in runtime context."""
+    """Run the requirements, scenarios, and test-case workflow for a BRD."""
     brd_text = runtime.context["brd_text"]
-    return await _generate_text(
-        "Generate a concise, high-value manual QA test-case report from this BRD. "
-        "Identify only explicit, testable requirements, then create at most 8 test "
-        "cases covering happy paths and stated validation behavior. Do not invent "
-        "behavior; when a detail is absent, state 'Not specified in BRD'. Return "
-        "Markdown only in exactly this plain-text structure:\n\n"
-        "BRD TEST CASES\n"
-        "COVERAGE: ...\n\n"
-        "TEST CASE: TC-001\n"
-        "Title: <title>\n"
-        "Requirement: <source requirement>\n"
-        "Type: Happy path | Validation\n"
-        "Priority: High | Medium | Low\n"
-        "Preconditions: ...\n"
-        "Steps:\n1. ...\n2. ...\n"
-        "Expected result: ...\n"
-        "----------------------------------------\n\n"
-        "BRD GAPS / ASSUMPTIONS\n"
-        "- ...",
-        brd_text,
+    requirements = await gather_requirements.ainvoke({"brd_text": brd_text})
+    scenarios = await generate_scenarios.ainvoke({"requirements_text": requirements})
+    test_cases = await create_test_cases.ainvoke({"scenarios_text": scenarios})
+
+    print(
+        f"\n--- Tool output: generate_scenarios ---\n{scenarios}"
+        "\n--- End tool output ---",
+        flush=True,
     )
+    
+    return f"BRD TEST SCENARIOS\n\n{scenarios}\n\n{'=' * 40}\n\n{test_cases}"

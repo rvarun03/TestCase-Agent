@@ -17,6 +17,17 @@ def get_llm(model: str | None = None):
         model=selected_model,
         temperature=0.1,
         reasoning_effort="low",
-        max_tokens=1200,
+        max_tokens=3500,
         model_kwargs=model_kwargs,
+    )
+
+def get_vision_llm():
+    settings = get_settings()
+
+    return ChatGroq(
+        api_key=settings.groq_api_key,
+        model="qwen/qwen3.8-27b",
+        temperature=0,
+        max_tokens=3500,
+        max_retries=2,
     )

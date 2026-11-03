@@ -41,7 +41,11 @@ def _report_tool_text(result: dict) -> str:
 class TestCaseAgent:
     """A single-action LangChain agent for BRD QA test-case generation."""
 
-    async def generate(self, brd_text: str) -> str:
+    async def generate(
+        self, 
+        brd_text: str,
+        additional_instructions: str = ""
+        ) -> str:
         result = await _get_agent().ainvoke(
             {
                 "messages": [
@@ -51,11 +55,18 @@ class TestCaseAgent:
                     )
                 ],
             },
-            context={"brd_text": brd_text},
+            context={
+                "brd_text": brd_text,
+                "additional_instructions": additional_instructions},
         )
         return _report_tool_text(result)
 
 
-async def generate_test_cases(brd_text: str) -> str:
+async def generate_test_cases(
+        brd_text: str,
+        additional_instructions: str = ""
+        ) -> str:
     """Public entry point used by the API route."""
-    return await TestCaseAgent().generate(brd_text)
+    return await TestCaseAgent().generate(
+        brd_text,
+        additional_instructions=additional_instructions)

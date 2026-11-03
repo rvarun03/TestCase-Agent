@@ -9,12 +9,25 @@ class BRDContext(TypedDict):
     """BRD data kept out of the model-visible tool schema."""
 
     brd_text: str
+    additional_instructions: str
 
 
 def _text_content(response: object) -> str:
     """Return an LLM response as text for passing between agent tools."""
     content = getattr(response, "content", response)
     return content if isinstance(content, str) else str(content)
+
+
+def _additional_instructions_block(additional_instructions: str) -> str:
+    """Format request-specific generation instructions for an LLM prompt."""
+    if not additional_instructions.strip():
+        return "No additional instructions were provided."
+
+    return (
+        "Follow these request-specific instructions unless they conflict with "
+        "the evidence-only and no-invention rules:\n"
+        f"{additional_instructions.strip()}"
+    )
 
 
 async def _generate_text(instructions: str, input_text: str) -> str:
@@ -32,10 +45,13 @@ async def _generate_text(instructions: str, input_text: str) -> str:
 
 
 @tool
-async def gather_requirements(brd_text: str) -> str:
+async def gather_requirements(
+    brd_text: str,
+    additional_instructions: str = "",
+) -> str:
     """Extract a concise, numbered list of testable requirements from a BRD."""
     return await _generate_text(
-        """
+        f"""
         You are a senior QA requirements analyst.
 
         Analyze ONLY the current supplied document,
@@ -104,16 +120,25 @@ async def gather_requirements(brd_text: str) -> str:
 
         Generate only requirements supported by
         the current input. Do not pad categories.
+        REQUEST-SPECIFIC INSTRUCTIONS:
+        {_additional_instructions_block(additional_instructions)}
+
+        If the request-specific instructions say to generate only functional
+        output, omit the UI REQUIREMENTS and NON-FUNCTIONAL REQUIREMENTS
+        sections entirely. Otherwise, use the output order below.
         """,
         brd_text,
     )
 
 
 @tool
-async def generate_scenarios(requirements_text: str) -> str:
+async def generate_scenarios(
+    requirements_text: str,
+    additional_instructions: str = "",
+) -> str:
     """Turn a requirement list into positive, negative, boundary, and role-based test scenarios."""
     return await _generate_text(
-        """
+        f"""
         You are a senior QA test scenario engineer.
 
         Generate test scenarios from the supplied
@@ -205,16 +230,26 @@ async def generate_scenarios(requirements_text: str) -> str:
         Evidence: Documented
 
         ----------------------------------------
+        REQUEST-SPECIFIC INSTRUCTIONS:
+        {_additional_instructions_block(additional_instructions)}
+
+        If the request-specific instructions say to generate only functional
+        output, generate only FUNCTIONAL SCENARIOS and omit the UI SCENARIOS
+        and NON-FUNCTIONAL SCENARIOS sections entirely. Otherwise, use the
+        format above.
         """,
         requirements_text,
     )
 
 
 @tool
-async def create_test_cases(scenarios_text: str) -> str:
+async def create_test_cases(
+    scenarios_text: str,
+    additional_instructions: str = "",
+) -> str:
     """Turn test scenarios into concise manual test cases ready for a QA demo."""
     return await _generate_text(
-        """
+        f"""
         You are a senior manual QA test case engineer.
 
         Convert the supplied scenarios into actionable
@@ -250,6 +285,12 @@ async def create_test_cases(scenarios_text: str) -> str:
         Evidence Status: Documented | Requires verification
 
         ----------------------------------------
+        REQUEST-SPECIFIC INSTRUCTIONS:
+        {_additional_instructions_block(additional_instructions)}
+
+        If the request-specific instructions say to generate only functional
+        output, create test cases only for functional scenarios. Do not create
+        UI or non-functional test cases.
         """,
         scenarios_text,
     )
@@ -259,9 +300,10 @@ async def create_test_cases(scenarios_text: str) -> str:
 async def generate_test_case_report(runtime: ToolRuntime[BRDContext]) -> str:
     """Run the requirements, scenarios, and test-case workflow for a BRD."""
     brd_text = runtime.context["brd_text"]
-    requirements = await gather_requirements.ainvoke({"brd_text": brd_text})
-    scenarios = await generate_scenarios.ainvoke({"requirements_text": requirements})
-    test_cases = await create_test_cases.ainvoke({"scenarios_text": scenarios})
+    instructions = runtime.context["additional_instructions"]
+    requirements = await gather_requirements.ainvoke({"brd_text": brd_text, "additional_instructions": instructions})
+    scenarios = await generate_scenarios.ainvoke({"requirements_text": requirements, "additional_instructions": instructions})
+    test_cases = await create_test_cases.ainvoke({"scenarios_text": scenarios, "additional_instructions": instructions})
 
     print(
         f"\n--- Tool output: generate_scenarios ---\n{scenarios}"

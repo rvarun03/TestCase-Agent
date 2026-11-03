@@ -865,11 +865,8 @@ async def generate(
         f"MODULE:\n{module_name.strip()}\n\n"
         f"BRD REQUIREMENTS:\n{brd_text}\n\n"
         f"UI SCREENSHOT ANALYSIS:\n"
-        f"{chr(10).join(ui_details)}\n\n"
-        f"APPLICATION DESCRIPTION:\n"
+        f"UI SCREENSHOT ANALYSIS:\n{ui_details}\n\n"
         f"{description.strip()}\n\n"
-        f"ADDITIONAL USER INSTRUCTIONS:\n"
-        f"{additional_instructions.strip()}"
       )
 
     # At least one meaningful input is required.
@@ -885,7 +882,10 @@ async def generate(
 
     # STEP 6: Invoke your existing agent
     try:
-      test_cases = await generate_test_cases(combined_input)
+      test_cases = await generate_test_cases(
+         combined_input,
+         additional_instructions=additional_instructions.strip()
+        )
 
     except Exception as error:
       print(f"Agent error: {error}")

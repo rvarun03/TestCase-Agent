@@ -1,4 +1,5 @@
 from io import BytesIO
+import logging
 
 from PIL import Image, UnidentifiedImageError
 
@@ -7,6 +8,12 @@ from fastapi.responses import HTMLResponse
 from app.services.document_service import extract_docx_text,analyze_screenshot
 from .agents.testcase_agent import generate_test_cases
 from .models import GenerateRequest, GenerateResponse
+from app.services.website_crawler import crawl_website
+import json
+from app.services.website_context import prepare_page_context
+
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="BRD Test-Case Agent", version="0.1.0")
 
@@ -343,6 +350,29 @@ async def upload_page() -> str:
 
         <hr class="section-divider">
 
+        <!-- WEBSITE URL -->
+        <div class="form-field">
+
+          <label for="website-url">
+            Website URL
+            <span class="optional">(Optional)</span>
+          </label>
+
+          <input
+            id="website-url"
+            type="url"
+            inputmode="url"
+            placeholder="https://example.com"
+          >
+
+          <div class="hint">
+            Provide a public HTTP or HTTPS website to crawl (up to 2 pages).
+          </div>
+
+        </div>
+
+        <hr class="section-divider">
+
         <!-- DESCRIPTION -->
         <div class="form-field">
 
@@ -431,6 +461,7 @@ async def upload_page() -> str:
     const screenshotsInput = document.getElementById("screenshots");
 
     const moduleInput = document.getElementById("module");
+    const websiteUrlInput = document.getElementById("website-url");
     const descriptionInput = document.getElementById("description");
     const instructionsInput = document.getElementById("instructions");
 
@@ -626,14 +657,16 @@ async def upload_page() -> str:
       const description = descriptionInput.value.trim();
       const instructions = instructionsInput.value.trim();
       const moduleName = moduleInput.value.trim();
+      const websiteUrl = websiteUrlInput.value.trim();
 
       if (
         !documentFile &&
         selectedScreenshots.length === 0 &&
-        !description
+        !description &&
+        !websiteUrl
       ) {
         setStatus(
-          "Please upload a BRD, screenshots, or provide a description.",
+          "Please upload a BRD, screenshots, provide a description, or enter a website URL.",
           "error"
         );
         return;
@@ -669,6 +702,7 @@ async def upload_page() -> str:
       data.append("module_name", moduleName);
       data.append("description", description);
       data.append("additional_instructions", instructions);
+      data.append("website_url", websiteUrl);
 
       try {
 
@@ -764,10 +798,68 @@ async def generate(
     module_name: str = Form(""),
     description: str = Form(""),
     additional_instructions: str = Form(""),
+    website_url: str = Form("")
 ):
 
     brd_text=""
     ui_details=[]
+
+    # Step 1 keeps crawler evidence in memory only; it is not included in the
+    # LLM input until the later evidence-processing step.
+    website_pages: list[dict] = []
+    website_contexts = []
+    website_evidence = ""  
+    
+    if website_url.strip():
+        
+        try:
+          # The crawler's public-URL checks remain the application-level
+          # safeguard. Production also requires network-level egress/SSRF
+          # restrictions to prevent access to internal services.
+          website_pages = await crawl_website(
+              website_url=website_url.strip(),
+              max_pages=2,
+            )
+
+          
+
+          for page_data in website_pages:
+
+            page_context = prepare_page_context(page_data)
+
+            website_contexts.append(page_context)
+
+          
+
+          if website_contexts:
+
+            website_evidence = json.dumps(
+              website_contexts,
+              ensure_ascii=False
+            )
+
+        except ValueError as error:
+            logger.warning("Website crawl rejected an invalid URL")
+            raise HTTPException(
+                status_code=400,
+                detail="Provide a valid public HTTP or HTTPS website URL",
+            ) from error
+        except Exception as error:
+            logger.exception("Website crawl failed")
+            raise HTTPException(
+                status_code=502,
+                detail="Could not crawl the provided website",
+            ) from error
+
+        logger.info("Website pages extracted: %d", len(website_pages))
+        for page in website_pages:
+            logger.info(
+                "Website page extracted: content_blocks=%d buttons=%d links=%d forms=%d",
+                len(page.get("content_blocks", [])),
+                len(page.get("buttons", [])),
+                len(page.get("links", [])),
+                len(page.get("forms", [])),
+            )
 
     # STEP 1: DOCX extraction (optional)
     if file is not None:
@@ -864,9 +956,9 @@ async def generate(
     combined_input = (
         f"MODULE:\n{module_name.strip()}\n\n"
         f"BRD REQUIREMENTS:\n{brd_text}\n\n"
-        f"UI SCREENSHOT ANALYSIS:\n"
         f"UI SCREENSHOT ANALYSIS:\n{ui_details}\n\n"
         f"{description.strip()}\n\n"
+        f"WEBSITE EVIDENCE:\n{website_evidence}\n\n"
       )
 
     # At least one meaningful input is required.
@@ -874,10 +966,11 @@ async def generate(
       brd_text.strip()
       or ui_details
       or description.strip()
+      or website_url.strip()
       ):
         raise HTTPException(
             status_code=400,
-            detail="Provide a DOCX, screenshot, or description"
+            detail="Provide a DOCX, screenshot, description, or website URL"
           )
 
     # STEP 6: Invoke your existing agent
